@@ -1,3 +1,4 @@
 fastmcp
 pydantic
+watchdog  # Optional: For auto-reload during development (see dev_watch.py)
 

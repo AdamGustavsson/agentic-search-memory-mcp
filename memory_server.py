@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import os
+import json
 import shutil
+import itertools
 from pathlib import Path
 from typing import Literal, Annotated, Optional
 
@@ -23,8 +25,210 @@ MAX_READ_CHARS = int(os.getenv("MEMORY_MAX_READ_CHARS", "20000"))
 # Maximum response size for tool outputs to keep responses concise
 MAX_RESPONSE_CHARS = int(os.getenv("MEMORY_MAX_RESPONSE_CHARS", "5000"))
 
+# Co-visitation tracking for associative memory
+COVIS_INDEX_NAME = "_covis.json"
+COVIS_MAX_RECOMMENDATIONS = int(os.getenv("MEMORY_COVIS_MAX_RECOMMENDATIONS", "3"))
+COVIS_MAX_RELATED_CHARS = int(os.getenv("MEMORY_COVIS_MAX_RELATED_CHARS", "2000"))
+
 
 mcp = FastMCP(name="Memory MCP Server")
+
+# ----------------------------
+# Co-visitation Index (Associative Memory)
+# ----------------------------
+# Track which files are viewed together to provide context-aware recommendations
+
+def _covis_index_path() -> Path:
+    """Get path to co-visitation index file."""
+    return MEM_ROOT / COVIS_INDEX_NAME
+
+
+def _load_covis_index() -> dict:
+    """Load co-visitation index from disk."""
+    try:
+        with open(_covis_index_path(), "r", encoding="utf-8") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {}
+
+
+def _save_covis_index(idx: dict):
+    """Save co-visitation index to disk atomically."""
+    tmp_path = _covis_index_path().with_suffix(".json.tmp")
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(idx, f, ensure_ascii=False, indent=2)
+    tmp_path.replace(_covis_index_path())
+
+
+# Session tracking: maps session_id -> list of file paths accessed
+_session_files: dict[str, list[str]] = {}
+
+# Cleanup old sessions periodically to prevent memory buildup
+_session_access_count = 0
+_SESSION_CLEANUP_THRESHOLD = 100  # Cleanup after N file accesses
+
+
+def _cleanup_old_sessions():
+    """
+    Clean up old session data to prevent memory buildup.
+    Keeps only the most recent sessions based on a simple threshold.
+    """
+    if len(_session_files) > 50:  # Keep max 50 sessions in memory
+        # Keep the 30 most recently updated sessions
+        # (Simple heuristic: sessions with more files are likely more recent)
+        sorted_sessions = sorted(
+            _session_files.items(), 
+            key=lambda x: len(x[1]), 
+            reverse=True
+        )
+        _session_files.clear()
+        for session_id, files in sorted_sessions[:30]:
+            _session_files[session_id] = files
+
+
+def _record_file_access(file_path: Path, session_id: str):
+    """
+    Record that a file was accessed in a specific session.
+    Tracks which files are viewed together within the same MCP session.
+    
+    Args:
+        file_path: Path to the file being accessed
+        session_id: MCP session ID from Context
+    """
+    global _session_access_count
+    
+    # Skip tracking internal implementation files
+    if file_path.name.startswith("_") or file_path.name.startswith("."):
+        return
+    
+    if session_id not in _session_files:
+        _session_files[session_id] = []
+    
+    # Store as relative path for portability
+    try:
+        file_str = str(file_path.relative_to(MEM_ROOT))
+    except ValueError:
+        # Fall back to absolute if not under MEM_ROOT
+        file_str = str(file_path)
+    
+    if file_str not in _session_files[session_id]:
+        _session_files[session_id].append(file_str)
+    
+    # Update co-visitation index periodically (when we have 2+ files)
+    if len(_session_files[session_id]) >= 2:
+        _update_covis_for_session(_session_files[session_id])
+    
+    # Periodic cleanup to prevent memory buildup
+    _session_access_count += 1
+    if _session_access_count >= _SESSION_CLEANUP_THRESHOLD:
+        _cleanup_old_sessions()
+        _session_access_count = 0
+
+
+def _update_covis_for_session(files: list[str]):
+    """
+    Update co-visitation index based on files accessed together in a session.
+    Only records pairs of actual files (not directories).
+    Stores paths relative to MEM_ROOT for portability.
+    
+    Args:
+        files: List of file paths (relative to MEM_ROOT) accessed in the same session
+    """
+    if len(files) < 2:
+        return
+    
+    idx = _load_covis_index()
+    
+    # Get unique files that still exist
+    unique_files = []
+    seen = set()
+    for f in files:
+        # Convert relative path back to absolute for validation
+        abs_path = MEM_ROOT / f if not Path(f).is_absolute() else Path(f)
+        if f not in seen and abs_path.is_file():
+            unique_files.append(f)
+            seen.add(f)
+    
+    if len(unique_files) < 2:
+        return
+    
+    # Record co-visitation for all pairs (using relative paths)
+    for a, b in itertools.combinations(unique_files, 2):
+        idx.setdefault(a, {}).setdefault(b, 0)
+        idx[a][b] += 1
+        idx.setdefault(b, {}).setdefault(a, 0)
+        idx[b][a] += 1
+    
+    _save_covis_index(idx)
+
+
+def _get_related_files(file_path: Path, session_id: str, max_count: int = COVIS_MAX_RECOMMENDATIONS) -> list[dict]:
+    """
+    Get files that have been co-visited with the given file.
+    Excludes files already viewed in the current session.
+    Returns list of {'file': path_str, 'count': int, 'content': str}
+    """
+    if not file_path.is_file():
+        return []
+    
+    idx = _load_covis_index()
+    
+    # Convert file_path to relative path for lookup
+    try:
+        file_str = str(file_path.relative_to(MEM_ROOT))
+    except ValueError:
+        file_str = str(file_path)
+    
+    neighbors = idx.get(file_str, {})
+    
+    # Get files already viewed in this session (to exclude them)
+    session_viewed = set(_session_files.get(session_id, []))
+    
+    # Keep only neighbors that:
+    # 1. Still exist as files
+    # 2. Haven't been viewed in this session yet
+    # 3. Are not internal implementation files
+    valid_neighbors = {}
+    for p, c in neighbors.items():
+        # Skip internal implementation files
+        file_name = Path(p).name
+        if file_name.startswith("_") or file_name.startswith("."):
+            continue
+            
+        # Skip if already viewed in this session
+        if p in session_viewed:
+            continue
+            
+        # Validate file exists
+        abs_path = MEM_ROOT / p if not Path(p).is_absolute() else Path(p)
+        if abs_path.is_file():
+            valid_neighbors[p] = c
+    
+    # Sort by co-visitation count (descending), then by path
+    top = sorted(valid_neighbors.items(), key=lambda t: (-t[1], t[0]))[:max_count]
+    
+    # Load content for related files
+    results = []
+    for path_str, count in top:
+        try:
+            # Convert relative path to absolute for reading
+            related_path = MEM_ROOT / path_str if not Path(path_str).is_absolute() else Path(path_str)
+            content = related_path.read_text(encoding="utf-8", errors="replace")
+            
+            # Truncate if too long
+            if len(content) > COVIS_MAX_RELATED_CHARS:
+                content = content[:COVIS_MAX_RELATED_CHARS] + f"\n…(truncated to {COVIS_MAX_RELATED_CHARS} chars)"
+            
+            results.append({
+                "file": path_str,  # Already relative
+                "count": count,
+                "content": content
+            })
+        except Exception:
+            # Skip files that can't be read
+            continue
+    
+    return results
 
 # ----------------------------
 # Helpers
@@ -80,7 +284,8 @@ def _list_dir(path: Path) -> str:
     """Return simple directory listing as formatted string."""
     items = []
     for p in sorted(path.iterdir(), key=lambda x: (x.is_file(), x.name.lower())):
-        if p.name.startswith("."):
+        # Skip hidden files and internal implementation files
+        if p.name.startswith(".") or p.name.startswith("_"):
             continue
         items.append(f"{p.name}/" if p.is_dir() else p.name)
     
@@ -122,6 +327,10 @@ def view(
     """View memory directory listing or file contents with optional line range. Line numbers in output are for display only and not part of the actual file content."""
     target = _normalize_incoming_path(path)
     
+    # Prevent viewing internal implementation files
+    if target != MEM_ROOT and (target.name.startswith("_") or target.name.startswith(".")):
+        raise RuntimeError(f"Cannot access internal file: {path}")
+    
     if not target.exists():
         raise RuntimeError(f"Path not found: {path or '.'}")
     
@@ -129,7 +338,8 @@ def view(
         try:
             items = []
             for item in sorted(target.iterdir()):
-                if item.name.startswith("."):
+                # Skip hidden files and internal implementation files
+                if item.name.startswith(".") or item.name.startswith("_"):
                     continue
                 items.append(f"{item.name}/" if item.is_dir() else item.name)
             
@@ -142,6 +352,11 @@ def view(
     
     elif target.is_file():
         try:
+            # Record this file access for co-visitation tracking (if Context provided)
+            if ctx is not None:
+                _record_file_access(target, ctx.session_id)
+            
+            # Read primary file content
             content = target.read_text(encoding="utf-8")
             lines = content.splitlines()
             
@@ -155,6 +370,23 @@ def view(
             
             numbered_lines = [f"{i + start_num:4d}: {line}" for i, line in enumerate(lines)]
             result = "\n".join(numbered_lines)
+            
+            # Get related files (associative memory) - exclude files already viewed in this session
+            related_files = _get_related_files(target, ctx.session_id) if ctx else []
+            
+            # Append related files section if any exist
+            if related_files:
+                result += "\n\n" + "="*60 + "\n"
+                result += "🧠 RELATED FILES (Associative Memory)\n"
+                result += "="*60 + "\n"
+                
+                for i, related in enumerate(related_files, 1):
+                    result += f"\n[{i}] {related['file']} (co-visited {related['count']}x)\n"
+                    result += "-" * 60 + "\n"
+                    result += related['content']
+                    if i < len(related_files):
+                        result += "\n"
+            
             return _truncate_response(result)
         except Exception as e:
             raise RuntimeError(f"Cannot read file {path}: {e}") from e
@@ -183,6 +415,11 @@ def create(
 ) -> str:
     """Create a new memory file or overwrite an existing one."""
     target = _normalize_incoming_path(path)
+    
+    # Prevent creating internal implementation files
+    if target.name.startswith("_") or target.name.startswith("."):
+        raise RuntimeError(f"Cannot create internal file: {path}")
+    
     _ensure_parent_dirs(target)
     target.write_text(file_text, encoding="utf-8")
     return f"Created: {path}"
@@ -211,6 +448,10 @@ def str_replace(
 ) -> str:
     """Replace all occurrences of old_str with new_str in a memory file."""
     target = _normalize_incoming_path(path)
+    
+    # Prevent editing internal implementation files
+    if target.name.startswith("_") or target.name.startswith("."):
+        raise RuntimeError(f"Cannot edit internal file: {path}")
     
     if not target.is_file():
         raise FileNotFoundError(f"File not found: {path}")
@@ -253,6 +494,10 @@ def insert(
     """Insert text at a specific line in a memory file using 0-based indexing."""
     target = _normalize_incoming_path(path)
     
+    # Prevent editing internal implementation files
+    if target.name.startswith("_") or target.name.startswith("."):
+        raise RuntimeError(f"Cannot edit internal file: {path}")
+    
     if not target.is_file():
         raise FileNotFoundError(f"File not found: {path}")
     
@@ -285,6 +530,10 @@ def delete(
 ) -> str:
     """Delete a memory file or directory (recursively for directories)."""
     target = _normalize_incoming_path(path)
+    
+    # Prevent deletion of internal implementation files
+    if target.name.startswith("_") or target.name.startswith("."):
+        raise RuntimeError(f"Cannot delete internal file: {path}")
     
     # Prevent deletion of root memory directory
     if target == MEM_ROOT:
@@ -322,6 +571,13 @@ def rename(
     """Rename or move a memory file or directory."""
     src = _normalize_incoming_path(old_path)
     dst = _normalize_incoming_path(new_path)
+    
+    # Prevent renaming internal implementation files
+    if src.name.startswith("_") or src.name.startswith("."):
+        raise RuntimeError(f"Cannot rename internal file: {old_path}")
+    
+    if dst.name.startswith("_") or dst.name.startswith("."):
+        raise RuntimeError(f"Cannot rename to internal file: {new_path}")
     
     if not src.exists():
         raise FileNotFoundError(f"Source path not found: {old_path}")
@@ -375,7 +631,8 @@ def _get_memory_resources() -> list[dict]:
     def add_files_recursive(path: Path, base_uri: str = "memory://"):
         try:
             for item in sorted(path.iterdir()):
-                if item.name.startswith("."):
+                # Skip hidden files and internal implementation files
+                if item.name.startswith(".") or item.name.startswith("_"):
                     continue
                     
                 if item.is_dir():
@@ -420,7 +677,8 @@ def memory_root_resource() -> dict:
     try:
         items = []
         for item in sorted(MEM_ROOT.iterdir()):
-            if item.name.startswith("."):
+            # Skip hidden files and internal implementation files
+            if item.name.startswith(".") or item.name.startswith("_"):
                 continue
             items.append(f"{item.name}/" if item.is_dir() else item.name)
         
@@ -475,7 +733,8 @@ def _register_memory_resources():
     def register_files_recursive(path: Path):
         try:
             for item in path.iterdir():
-                if item.name.startswith("."):
+                # Skip hidden files and internal implementation files
+                if item.name.startswith(".") or item.name.startswith("_"):
                     continue
                 if item.is_file():
                     register_file_resource(item)
