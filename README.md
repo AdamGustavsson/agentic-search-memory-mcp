@@ -15,19 +15,26 @@ The design philosophy follows Anthropic's Agent SDK pattern of maintaining persi
 ## ✨ Features
 
 ### Core Memory Operations
-- **📖 View**: Browse memory directory structure and read file contents
-- **📝 Create**: Create new memory files with custom content
-- **✏️ Edit**: Replace text in existing memory files
-- **➕ Insert**: Add content at specific line positions
+- **📖 View**: Browse memory directory structure and read file contents (with pagination support)
+- **📝 Create**: Create new memory files with custom content (warns on large files)
+- **✏️ Edit**: Replace text in existing memory files (warns on large results)
+- **➕ Insert**: Add content at specific line positions (warns on large results)
 - **🗑️ Delete**: Remove memory files or directories
 - **📁 Rename**: Move or rename memory files and directories
 - **🧹 Clear**: Reset all memory (with safety confirmation)
 
+### Associative Memory
+- **🧠 Co-Visitation Tracking**: Automatically learns which files are related based on access patterns
+- **🔗 Smart Recommendations**: Suggests related files when viewing content
+- **📊 Session-Based Learning**: Tracks file relationships within MCP sessions
+- **🎯 Non-Invasive Design**: Path-only recommendations prevent measurement plateau
+
 ### Security & Performance
 - **🔒 Path Traversal Protection**: Secure file system access within memory boundaries
-- **📏 Response Size Limits**: Configurable limits to prevent context bloat
+- **📏 Smart Size Management**: High limits (50K chars) with warnings and pagination guidance
 - **⚡ Optimized Responses**: Concise tool responses for efficient LLM context usage
 - **🛡️ Input Validation**: Robust parameter validation and error handling
+- **⚠️ Large File Warnings**: Proactive alerts when creating/editing large files (>10K chars)
 
 ### MCP Integration
 - **🔗 Full MCP Compliance**: Implements complete MCP specification
@@ -99,8 +106,16 @@ export MEMORY_DIR="/path/to/your/memory/directory"
 # Maximum characters to read from files (default: 20000)
 export MEMORY_MAX_READ_CHARS=50000
 
-# Maximum response size for tool outputs (default: 5000)
-export MEMORY_MAX_RESPONSE_CHARS=10000
+# Maximum response size for tool outputs (default: 50000)
+# High limit to prevent agents from losing access to large files
+export MEMORY_MAX_RESPONSE_CHARS=50000
+
+# Warning threshold for large files (default: 10000)
+# Agents get warnings when creating/editing files above this size
+export MEMORY_LARGE_FILE_THRESHOLD=10000
+
+# Maximum number of related files to show (default: 3)
+export MEMORY_COVIS_MAX_RECOMMENDATIONS=5
 ```
 
 ## 🏗️ Architecture

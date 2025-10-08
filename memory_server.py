@@ -22,13 +22,15 @@ MEM_ROOT.mkdir(parents=True, exist_ok=True)
 # You can override via env var.
 MAX_READ_CHARS = int(os.getenv("MEMORY_MAX_READ_CHARS", "20000"))
 
-# Maximum response size for tool outputs to keep responses concise
-MAX_RESPONSE_CHARS = int(os.getenv("MEMORY_MAX_RESPONSE_CHARS", "5000"))
+# Maximum response size for tool outputs - high limit for safety, use pagination for large files
+MAX_RESPONSE_CHARS = int(os.getenv("MEMORY_MAX_RESPONSE_CHARS", "50000"))
+
+# Warn when files exceed this size (to encourage pagination)
+LARGE_FILE_WARNING_THRESHOLD = int(os.getenv("MEMORY_LARGE_FILE_THRESHOLD", "10000"))
 
 # Co-visitation tracking for associative memory
 COVIS_INDEX_NAME = "_covis.json"
 COVIS_MAX_RECOMMENDATIONS = int(os.getenv("MEMORY_COVIS_MAX_RECOMMENDATIONS", "3"))
-COVIS_MAX_RELATED_CHARS = int(os.getenv("MEMORY_COVIS_MAX_RELATED_CHARS", "2000"))
 
 
 mcp = FastMCP(name="Memory MCP Server")
@@ -166,7 +168,7 @@ def _get_related_files(file_path: Path, session_id: str, max_count: int = COVIS_
     """
     Get files that have been co-visited with the given file.
     Excludes files already viewed in the current session.
-    Returns list of {'file': path_str, 'count': int, 'content': str}
+    Returns list of {'file': path_str, 'count': int}
     """
     if not file_path.is_file():
         return []
@@ -207,26 +209,13 @@ def _get_related_files(file_path: Path, session_id: str, max_count: int = COVIS_
     # Sort by co-visitation count (descending), then by path
     top = sorted(valid_neighbors.items(), key=lambda t: (-t[1], t[0]))[:max_count]
     
-    # Load content for related files
+    # Return just the file paths and counts (no content loading)
     results = []
     for path_str, count in top:
-        try:
-            # Convert relative path to absolute for reading
-            related_path = MEM_ROOT / path_str if not Path(path_str).is_absolute() else Path(path_str)
-            content = related_path.read_text(encoding="utf-8", errors="replace")
-            
-            # Truncate if too long
-            if len(content) > COVIS_MAX_RELATED_CHARS:
-                content = content[:COVIS_MAX_RELATED_CHARS] + f"\n…(truncated to {COVIS_MAX_RELATED_CHARS} chars)"
-            
-            results.append({
-                "file": path_str,  # Already relative
-                "count": count,
-                "content": content
-            })
-        except Exception:
-            # Skip files that can't be read
-            continue
+        results.append({
+            "file": path_str,
+            "count": count
+        })
     
     return results
 
@@ -277,7 +266,14 @@ def _truncate_response(text: str, max_chars: int = MAX_RESPONSE_CHARS) -> str:
     """Truncate response text to keep it concise."""
     if len(text) <= max_chars:
         return text
-    return text[:max_chars] + f"\n…(truncated to {max_chars} chars)"
+    
+    # Count total lines for helpful context
+    total_lines = text.count('\n') + 1
+    truncated_lines = text[:max_chars].count('\n') + 1
+    
+    return (text[:max_chars] + 
+            f"\n…(truncated to {max_chars:,} chars, showing ~{truncated_lines}/{total_lines} lines)\n"
+            f"💡 TIP: Use start_line/end_line parameters to view specific sections of large files.")
 
 
 def _list_dir(path: Path) -> str:
@@ -381,11 +377,7 @@ def view(
                 result += "="*60 + "\n"
                 
                 for i, related in enumerate(related_files, 1):
-                    result += f"\n[{i}] {related['file']} (co-visited {related['count']}x)\n"
-                    result += "-" * 60 + "\n"
-                    result += related['content']
-                    if i < len(related_files):
-                        result += "\n"
+                    result += f"  [{i}] {related['file']} (co-visited {related['count']}x)\n"
             
             return _truncate_response(result)
         except Exception as e:
@@ -422,6 +414,15 @@ def create(
     
     _ensure_parent_dirs(target)
     target.write_text(file_text, encoding="utf-8")
+    
+    # Warn about large files
+    file_size = len(file_text)
+    if file_size > LARGE_FILE_WARNING_THRESHOLD:
+        lines = file_text.count('\n') + 1
+        return (f"Created: {path}\n"
+                f"⚠️ WARNING: Large file created ({file_size:,} chars, ~{lines} lines). "
+                f"Consider using start_line/end_line when viewing to avoid truncation.")
+    
     return f"Created: {path}"
 
 
@@ -467,6 +468,14 @@ def str_replace(
     new_content = content.replace(old_str, new_str)
     target.write_text(new_content, encoding="utf-8")
     
+    # Warn about large files after edit
+    file_size = len(new_content)
+    if file_size > LARGE_FILE_WARNING_THRESHOLD:
+        lines = new_content.count('\n') + 1
+        return (f"Updated: {path}\n"
+                f"⚠️ WARNING: File is now large ({file_size:,} chars, ~{lines} lines). "
+                f"Consider using start_line/end_line when viewing to avoid truncation.")
+    
     return f"Updated: {path}"
 
 
@@ -507,7 +516,16 @@ def insert(
         raise ValueError(f"Invalid insert_line {insert_line}. Must be 0-{len(lines)}")
     
     lines.insert(insert_line, insert_text.rstrip("\n"))
-    target.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    new_content = "\n".join(lines) + "\n"
+    target.write_text(new_content, encoding="utf-8")
+    
+    # Warn about large files after insert
+    file_size = len(new_content)
+    if file_size > LARGE_FILE_WARNING_THRESHOLD:
+        total_lines = len(lines)
+        return (f"Inserted at line {insert_line}: {path}\n"
+                f"⚠️ WARNING: File is now large ({file_size:,} chars, ~{total_lines} lines). "
+                f"Consider refactoring the file to reduce size.")
     
     return f"Inserted at line {insert_line}: {path}"
 

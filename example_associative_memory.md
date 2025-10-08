@@ -53,36 +53,20 @@ When you view `project/requirements.md`, the output will include:
 ============================================================
 🧠 RELATED FILES (Associative Memory)
 ============================================================
-
-[1] project/architecture.md (co-visited 2x)
-------------------------------------------------------------
-# Architecture Overview
-
-This document describes the system architecture...
-
-[2] project/api_spec.md (co-visited 1x)
-------------------------------------------------------------
-# API Specification
-
-## Endpoints
-- GET /api/users
-- POST /api/users
-...
-
-[3] project/budget.md (co-visited 1x)
-------------------------------------------------------------
-# Project Budget
-
-Total: $50,000
-...
+  [1] project/architecture.md (co-visited 2x)
+  [2] project/api_spec.md (co-visited 1x)
+  [3] project/budget.md (co-visited 1x)
 ```
+
+You can then explicitly view any related file to access its full content.
 
 ## Benefits in Practice
 
 1. **Context Restoration**: When you return to a file after weeks, you immediately see what other files are related
 2. **Knowledge Discovery**: Find connections you may have forgotten
-3. **Faster Navigation**: No need to manually search for related files
+3. **Faster Navigation**: Related files are suggested without needing to search
 4. **Pattern Learning**: The system learns your workflow patterns over time
+5. **Accurate Association Strength**: Path-only recommendations ensure co-visitation counts reflect genuine usefulness
 
 ## Use Cases
 
@@ -107,7 +91,8 @@ Total: $50,000
 1. **Natural Workflow**: Just use the memory system naturally - access related files together
 2. **Multiple Sessions**: The more you use it, the better the recommendations become
 3. **Consistent Naming**: Use clear, descriptive file names for better context
-4. **Regular Reviews**: Periodically view files together to reinforce relationships
+4. **Explicit Viewing**: When a related file is useful, explicitly view it to strengthen the association
+5. **Ignore Weak Suggestions**: If a suggested file isn't relevant, simply ignore it - the association will naturally decay
 
 ## Privacy Note
 

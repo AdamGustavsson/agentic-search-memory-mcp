@@ -20,7 +20,7 @@ The memory server now includes **associative memory** capabilities inspired by h
 - When you view a file, the server automatically:
   1. Shows the primary file content
   2. Finds up to 3 related files (configurable)
-  3. Includes the content of related files inline
+  3. Lists related file paths (agent must explicitly view to access content)
 
 ## Example Output
 
@@ -34,15 +34,11 @@ When viewing a file that has related files:
 ============================================================
 🧠 RELATED FILES (Associative Memory)
 ============================================================
-
-[1] patterns/similar_topic.md (co-visited 5x)
-------------------------------------------------------------
-Content of the related file...
-
-[2] accounts/context.txt (co-visited 3x)
-------------------------------------------------------------
-More related content...
+  [1] patterns/similar_topic.md (co-visited 5x)
+  [2] accounts/context.txt (co-visited 3x)
 ```
+
+The agent can then explicitly view any related file to access its content.
 
 ## Configuration
 
@@ -51,17 +47,15 @@ Control associative memory behavior via environment variables:
 ```bash
 # Maximum number of related files to show (default: 3)
 export MEMORY_COVIS_MAX_RECOMMENDATIONS=5
-
-# Maximum characters to show per related file (default: 2000)
-export MEMORY_COVIS_MAX_RELATED_CHARS=3000
 ```
 
 ## Benefits
 
-1. **Contextual Awareness**: Automatically surfaces related context when viewing files
+1. **Contextual Awareness**: Automatically surfaces related files when viewing content
 2. **Pattern Recognition**: Learns from your access patterns over time
-3. **Reduced Manual Navigation**: No need to manually open related files
+3. **Reduced Search Time**: Suggests relevant files without needing to search
 4. **Inter-Session Memory**: Recommendations persist across different sessions
+5. **Non-Invasive Measurement**: Showing paths (not content) preserves the viewing behavior being measured
 
 ## Privacy & Storage
 
@@ -110,6 +104,16 @@ Based on the reference implementation provided, with adaptations for:
 3. **Automatic Cleanup**: Prevents memory buildup by cleaning old sessions after 100 file accesses
 4. **Context-Aware**: Leverages FastMCP Context for session identification
 5. **MCP Protocol Compliant**: Follows official MCP recommendations for session management
+6. **Non-Invasive Recommendations**: Shows file paths only (not content) to prevent measurement plateau
+
+### Why Path-Only Recommendations?
+
+The system shows **paths without content** for related files. This design prevents the "plateau problem":
+
+- **With inline content**: Once files are recommended together, agents stop explicitly viewing them → co-visitation count plateaus → can't distinguish strong vs weak associations
+- **With path-only**: Agents must explicitly view truly useful files → co-visitation continues to grow for strong associations → weak associations naturally decay
+
+This preserves the intentionality of file access and allows the system to learn which associations are genuinely useful over time.
 
 ### MCP Protocol Alignment
 
