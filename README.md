@@ -214,8 +214,8 @@ lsof -ti:6277 | xargs kill
 This project is inspired by **Anthropic's Agent SDK** memory management approach, which emphasizes:
 - **Persistent Context**: Memory that survives beyond single conversations
 - **Structured Storage**: Organized, searchable information repositories
-- **Efficient Retrieval**: Fast access to relevant historical context
-- **Context Window Management**: Smart handling of memory size limits
+- **Mimics tools that agents are trained to use**: LLMs used in agents are trained at agentic coding with tools like view, create, str_replace and insert. Memory with this mcp server has the tool set agents know how to use.  
+
 
 
 ## 🔗 Related Projects
