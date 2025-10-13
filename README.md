@@ -15,19 +15,20 @@ The design philosophy follows Anthropic's Agent SDK pattern of maintaining persi
 ## ✨ Features
 
 ### Core Memory Operations
-- **📖 View**: Browse memory directory structure and read file contents (with pagination support)
-- **📝 Create**: Create new memory files with custom content (warns on large files)
-- **✏️ Edit**: Replace text in existing memory files (warns on large results)
-- **➕ Insert**: Add content at specific line positions (warns on large results)
+- **📖 View**: Browse memory directory tree (full recursive with 1-space indentation) and read file contents (with pagination support)
+- **📝 Create**: Create new memory files with custom content (warns on large files, tracks co-visitation)
+- **✏️ Edit**: Replace text in existing memory files (warns on large results, tracks co-visitation)
+- **➕ Insert**: Add content at specific line positions (warns on large results, tracks co-visitation)
 - **🗑️ Delete**: Remove memory files or directories
 - **📁 Rename**: Move or rename memory files and directories
 - **🧹 Clear**: Reset all memory (with safety confirmation)
 
 ### Associative Memory
-- **🧠 Co-Visitation Tracking**: Automatically learns which files are related based on access patterns
+- **🧠 Co-Visitation Tracking**: Automatically learns which files are related based on viewing, creating, and editing patterns
 - **🔗 Smart Recommendations**: Suggests related files when viewing content
-- **📊 Session-Based Learning**: Tracks file relationships within MCP sessions
+- **📊 Session-Based Learning**: Tracks file relationships within MCP sessions (read and write operations)
 - **🎯 Non-Invasive Design**: Path-only recommendations prevent measurement plateau
+- **🛡️ Robust Error Handling**: Gracefully handles corrupted co-visitation data
 
 ### Security & Performance
 - **🔒 Path Traversal Protection**: Secure file system access within memory boundaries

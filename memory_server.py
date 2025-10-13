@@ -52,6 +52,10 @@ def _load_covis_index() -> dict:
             return json.load(f)
     except FileNotFoundError:
         return {}
+    except (json.JSONDecodeError, ValueError) as e:
+        # Corrupted JSON file - reset it
+        print(f"Warning: Corrupted co-visitation index, resetting: {e}")
+        return {}
 
 
 def _save_covis_index(idx: dict):
@@ -292,6 +296,35 @@ def _list_dir(path: Path) -> str:
     return f"Directory: {display_path}\n" + "\n".join([f"- {item}" for item in items])
 
 
+def _build_tree(path: Path, indent: int = 0) -> list[str]:
+    """
+    Build a recursive tree structure with 1-space indentation.
+    Returns a list of lines representing the tree.
+    """
+    lines = []
+    
+    try:
+        items = sorted(path.iterdir(), key=lambda x: (x.is_file(), x.name.lower()))
+        
+        for item in items:
+            # Skip hidden files and internal implementation files
+            if item.name.startswith(".") or item.name.startswith("_"):
+                continue
+            
+            # Add current item with proper indentation
+            prefix = " " * indent
+            if item.is_dir():
+                lines.append(f"{prefix}{item.name}/")
+                # Recursively add subdirectory contents
+                lines.extend(_build_tree(item, indent + 1))
+            else:
+                lines.append(f"{prefix}{item.name}")
+    except Exception:
+        pass  # Skip inaccessible items
+    
+    return lines
+
+
 # ----------------------------
 # Individual Memory Tools
 # ----------------------------
@@ -332,16 +365,14 @@ def view(
     
     if target.is_dir():
         try:
-            items = []
-            for item in sorted(target.iterdir()):
-                # Skip hidden files and internal implementation files
-                if item.name.startswith(".") or item.name.startswith("_"):
-                    continue
-                items.append(f"{item.name}/" if item.is_dir() else item.name)
+            # Build full tree structure with 1-space indentation
+            tree_lines = _build_tree(target, indent=0)
             
-            # Use relative path from MEM_ROOT for display, not the original path parameter
-            display_path = target.relative_to(MEM_ROOT).as_posix() if target != MEM_ROOT else "."
-            result = f"Directory: {display_path}" + ("\n" if items else "") + "\n".join([f"- {item}" for item in items])
+            if not tree_lines:  # Empty directory
+                result = "(empty)"
+            else:
+                result = "\n".join(tree_lines)
+            
             return _truncate_response(result)
         except Exception as e:
             raise RuntimeError(f"Cannot read directory {path or '.'}: {e}") from e
@@ -372,9 +403,8 @@ def view(
             
             # Append related files section if any exist
             if related_files:
-                result += "\n\n" + "="*60 + "\n"
+                result += "\n\n"
                 result += "🧠 RELATED FILES (Associative Memory)\n"
-                result += "="*60 + "\n"
                 
                 for i, related in enumerate(related_files, 1):
                     result += f"  [{i}] {related['file']} (co-visited {related['count']}x)\n"
@@ -414,6 +444,11 @@ def create(
     
     _ensure_parent_dirs(target)
     target.write_text(file_text, encoding="utf-8")
+    
+    # Record this file access for co-visitation tracking (if Context provided)
+    # Creating a file after viewing others suggests they're related
+    if ctx is not None:
+        _record_file_access(target, ctx.session_id)
     
     # Warn about large files
     file_size = len(file_text)
@@ -468,6 +503,11 @@ def str_replace(
     new_content = content.replace(old_str, new_str)
     target.write_text(new_content, encoding="utf-8")
     
+    # Record this file access for co-visitation tracking (if Context provided)
+    # Editing a file after viewing others suggests they're related
+    if ctx is not None:
+        _record_file_access(target, ctx.session_id)
+    
     # Warn about large files after edit
     file_size = len(new_content)
     if file_size > LARGE_FILE_WARNING_THRESHOLD:
@@ -518,6 +558,11 @@ def insert(
     lines.insert(insert_line, insert_text.rstrip("\n"))
     new_content = "\n".join(lines) + "\n"
     target.write_text(new_content, encoding="utf-8")
+    
+    # Record this file access for co-visitation tracking (if Context provided)
+    # Editing a file after viewing others suggests they're related
+    if ctx is not None:
+        _record_file_access(target, ctx.session_id)
     
     # Warn about large files after insert
     file_size = len(new_content)

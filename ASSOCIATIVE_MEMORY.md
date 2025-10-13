@@ -10,11 +10,13 @@ The memory server now includes **associative memory** capabilities inspired by h
 - The server uses FastMCP's built-in session IDs to track file accesses
 - Files accessed within the same MCP session (client connection) are considered related
 - Each session has a unique ID that persists across multiple tool calls
+- **Tracks both read AND write operations**: viewing, creating, and editing files
 
 ### 2. **Co-Visitation Index**
-- A JSON index (`_covis.json`) tracks which files are viewed together
+- A JSON index (`_covis.json`) tracks which files are accessed together
 - Every time 2+ files are accessed in a session, their co-visitation count increases
 - The index is stored in: `{MEMORY_DIR}/_covis.json`
+- **Robust error handling**: Gracefully handles corrupted JSON data
 
 ### 3. **Related File Recommendations**
 - When you view a file, the server automatically:
@@ -24,21 +26,34 @@ The memory server now includes **associative memory** capabilities inspired by h
 
 ## Example Output
 
-When viewing a file that has related files:
+### Viewing a File with Related Files
 
 ```
    1: # My Notes
    2: This is the main content
    3: ...
 
-============================================================
 🧠 RELATED FILES (Associative Memory)
-============================================================
   [1] patterns/similar_topic.md (co-visited 5x)
   [2] accounts/context.txt (co-visited 3x)
 ```
 
 The agent can then explicitly view any related file to access its content.
+
+### Viewing a Directory (Tree View)
+
+```
+docs/
+ README.md
+src/
+ util/
+  io.py
+  math.py
+ main.py
+LICENSE
+```
+
+Directories are shown as a full recursive tree with 1-space indentation.
 
 ## Configuration
 
@@ -52,10 +67,11 @@ export MEMORY_COVIS_MAX_RECOMMENDATIONS=5
 ## Benefits
 
 1. **Contextual Awareness**: Automatically surfaces related files when viewing content
-2. **Pattern Recognition**: Learns from your access patterns over time
+2. **Pattern Recognition**: Learns from both viewing and writing patterns over time
 3. **Reduced Search Time**: Suggests relevant files without needing to search
 4. **Inter-Session Memory**: Recommendations persist across different sessions
 5. **Non-Invasive Measurement**: Showing paths (not content) preserves the viewing behavior being measured
+6. **Write Operation Tracking**: Creating/editing files after viewing others establishes relationships
 
 ## Privacy & Storage
 
@@ -68,10 +84,11 @@ export MEMORY_COVIS_MAX_RECOMMENDATIONS=5
 
 ### Co-Visitation Algorithm
 
-For each session with files [A, B, C]:
+For each session with file operations [view A, view B, create C]:
 - Record pairs: (A,B), (A,C), (B,C)
 - Increment co-visitation count for each pair
 - Store bidirectional relationships
+- **All operations count**: `view()`, `create()`, `str_replace()`, `insert()`
 
 ### Recommendation Ranking
 
@@ -88,6 +105,18 @@ A "session" is defined by the **FastMCP session ID**:
 - Co-visitation updated after each file access (if 2+ files in session)
 - Old session data is cleaned up periodically to prevent memory buildup
 
+### Tracked Operations
+
+**Read operations:**
+- `view()` - Viewing file content
+
+**Write operations:**
+- `create()` - Creating new files (tracks relationship with previously viewed files)
+- `str_replace()` - Editing file content (indicates working with related concepts)
+- `insert()` - Inserting into files (indicates working with related concepts)
+
+**Rationale:** If you view files A and B, then create file C, file C is likely conceptually related to A and B. The same logic applies to editing operations.
+
 ## Implementation Notes
 
 Based on the reference implementation provided, with adaptations for:
@@ -96,6 +125,7 @@ Based on the reference implementation provided, with adaptations for:
 - **Response truncation**: Optimal token usage
 - **Atomic file writes**: Index persistence
 - **Memory management**: Automatic cleanup of old session data
+- **Error resilience**: Gracefully handles corrupted JSON index files
 
 ### Key Improvements Over Reference Implementation
 
