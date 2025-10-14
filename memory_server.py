@@ -338,22 +338,12 @@ def _build_tree(path: Path, indent: int = 0) -> list[str]:
     },
 )
 def view(
-    path: Annotated[
-        Optional[str],
-        Field(
-            default=None,
-            description="Target path (e.g. 'notes.txt' or directory path). Defaults to root memory directory."
-        ),
-    ] = None,
-    start_line: Annotated[
-        Optional[int], Field(default=None, ge=0, description="0-based start line (inclusive) for file viewing. Note: Line numbers in output are for display only and not part of the actual file content.")
-    ] = None,
-    end_line: Annotated[
-        Optional[int], Field(default=None, ge=0, description="0-based end line (inclusive) for file viewing. Note: Line numbers in output are for display only and not part of the actual file content.")
-    ] = None,
+    path: Annotated[str, Field(description="Target path (e.g. 'notes.txt')")] = None,
+    start_line: Annotated[int, Field(description="Start line (0-based)")] = None,
+    end_line: Annotated[int, Field(description="End line (0-based, inclusive)")] = None,
     ctx: Context | None = None,
 ) -> str:
-    """View memory directory listing or file contents with optional line range. Line numbers in output are for display only and not part of the actual file content."""
+    """View memory directory listing or file contents with optional line range."""
     target = _normalize_incoming_path(path)
     
     # Prevent viewing internal implementation files
@@ -388,15 +378,12 @@ def view(
             lines = content.splitlines()
             
             if start_line is not None or end_line is not None:
-                start_idx = start_line or 0
-                end_idx = len(lines) if end_line is None else end_line + 1
+                # Use 0-based indexing
+                start_idx = start_line if start_line is not None else 0
+                end_idx = (end_line + 1) if end_line is not None else len(lines)
                 lines = lines[start_idx:end_idx]
-                start_num = start_idx + 1  # For display numbering (1-based)
-            else:
-                start_num = 1
             
-            numbered_lines = [f"{i + start_num:4d}: {line}" for i, line in enumerate(lines)]
-            result = "\n".join(numbered_lines)
+            result = "\n".join(lines)
             
             # Get related files (associative memory) - exclude files already viewed in this session
             related_files = _get_related_files(target, ctx.session_id) if ctx else []
