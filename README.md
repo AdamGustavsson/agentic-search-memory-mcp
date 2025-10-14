@@ -39,9 +39,8 @@ The design philosophy follows Anthropic's Agent SDK pattern of maintaining persi
 
 ### MCP Integration
 - **🔗 Full MCP Compliance**: Implements complete MCP specification
-- **📊 Rich Resources**: Exposes memory files as MCP resources with metadata
-- **🔄 Real-time Updates**: Dynamic resource discovery and updates
 - **🏷️ Proper Annotations**: Comprehensive tool descriptions and metadata
+- **⚡ Efficient Tool Design**: Optimized for agent workflows
 
 ## 🚀 Quick Start
 
@@ -126,20 +125,20 @@ export MEMORY_COVIS_MAX_RECOMMENDATIONS=5
 ```
 memory_server.py
 ├── Configuration & Setup
+├── Co-visitation Index (Associative Memory)
+│   ├── Session tracking
+│   └── File relationship learning
 ├── Security Helpers
 │   ├── Path normalization
 │   └── Traversal protection
-├── Core Tools (7 MCP tools)
-│   ├── view() - Read memory content
-│   ├── create() - Create memory files
-│   ├── str_replace() - Edit memory files
-│   ├── insert() - Add content at lines
-│   ├── delete() - Remove memory items
-│   ├── rename() - Move/rename items
-│   └── clear_all_memory() - Reset memory
-└── MCP Resources
-    ├── Memory directory resources
-    └── Individual file resources
+└── Core Tools (7 MCP tools)
+    ├── view() - Read memory content
+    ├── create() - Create memory files
+    ├── str_replace() - Edit memory files
+    ├── insert() - Add content at lines
+    ├── delete() - Remove memory items
+    ├── rename() - Move/rename items
+    └── clear_all_memory() - Reset memory
 ```
 
 
